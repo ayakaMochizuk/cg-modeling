@@ -1,0 +1,29 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor / tooling
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+.claude/
+
+# このリポジトリに含めない、最終課題と無関係な作業ファイル
+app (10).ts
+app-*.ts
+!app.ts
+dice.mtl
+dice.obj
+tri.obj
+tri_mat.mtl
+tri_mat.obj
+*.png
+*.jpg
+readme.txt
