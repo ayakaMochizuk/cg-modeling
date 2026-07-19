@@ -1,4 +1,3 @@
-// 24FI116 望月彩花
 
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
