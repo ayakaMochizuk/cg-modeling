@@ -1,11 +1,10 @@
 // 24FI116 望月彩花
 // CG Final — 物理演算ピタゴラ装置 (three.js + cannon-es)
 //
-// STEP 5: ジグザグ(2段目の坂) — 構造を先に完成させる
-//   逆向きの坂をもう1段追加し、坂＋ガードレールのセットを2段並べる。
-//   低い端から次の段への受け渡しは摩擦・反発に左右されるため、
-//   ここでは最終版と同じ比率の位置に置くだけにとどめ、着地の調整は
-//   次のステップ(摩擦・反発)でまとめて行う
+// STEP 7: ゴール判定 + 花火
+//   坂8段ジグザグ + ゴール(浅い箱)に、ボールがゴール範囲に入ったかを
+//   毎フレーム判定する checkGoal と、入った瞬間に打ち上がる花火
+//   (パーティクル、加算合成の発光スプライト)を追加
 
 import * as THREE from "three";
 import * as CANNON from "cannon-es";
@@ -26,6 +25,15 @@ class Pitagora {
   // 坂の共通パラメータ
   private readonly rampLen = 9;
   private readonly rampSlope = 0.22;
+
+  // ゴール判定と花火
+  private goalReached = false;
+  private goalBounds = { x0: 0, x1: 0, z0: 0, z1: 0 };
+  private fireworks: {
+    points: THREE.Points;
+    velocities: Float32Array;
+    life: number;
+  } | null = null;
 
   // ==== 画面(レンダラ)の作成 ====
   public createRendererDOM = (
@@ -55,6 +63,8 @@ class Pitagora {
         this.world.step(1 / 120);
       }
       this.syncMeshes();
+      this.checkGoal();
+      this.updateFireworks(1 / 30);
 
       orbit.update();
       renderer.render(this.scene, camera);
@@ -66,6 +76,8 @@ class Pitagora {
     (window as any).__step = (n = 1) => {
       for (let i = 0; i < n; i++) {
         for (let s = 0; s < 4; s++) this.world.step(1 / 120);
+        this.checkGoal();
+        this.updateFireworks(1 / 30);
       }
       this.syncMeshes();
       renderer.render(this.scene, camera);
@@ -107,6 +119,7 @@ class Pitagora {
       this.serpRamp(r.cx, r.cy + heightOffset, r.dir, r.color);
     }
 
+    this.setupGoal();
     this.setupBall();
   };
 
@@ -189,6 +202,151 @@ class Pitagora {
     this.groundBody.addShape(new CANNON.Plane());
     this.groundBody.quaternion.setFromEuler(-Math.PI / 2, 0, 0);
     this.world.addBody(this.groundBody);
+  };
+
+  // ---- ゴール: 最終段の出口の下あたりに置く、浅い箱でボールを受け止める ----
+  private setupGoal = () => {
+    const gx = -4; // 8段目の出口(だいたい x=-1.4)より少し先
+    const gz = 0;
+    const gw = 5; // x方向の広さ
+    const gd = 3; // z方向の広さ(坂と同じくらい)
+    const wallH = 0.6;
+
+    // 底(色付きの床でゴールと分かるようにする)
+    this.makeBox(
+      { x: gw, y: 0.2, z: gd },
+      { x: gx, y: 0.1, z: gz },
+      { color: 0x2e8b57 },
+    );
+
+    // 落ち防止の周りの低い壁
+    for (const zz of [gd / 2, -gd / 2]) {
+      this.makeBox(
+        { x: gw, y: wallH, z: 0.2 },
+        { x: gx, y: wallH / 2, z: zz },
+        { color: 0x1b2540 },
+      );
+    }
+    for (const xx of [gx - gw / 2, gx + gw / 2]) {
+      this.makeBox(
+        { x: 0.2, y: wallH, z: gd },
+        { x: xx, y: wallH / 2, z: gz },
+        { color: 0x1b2540 },
+      );
+    }
+
+    this.goalBounds = {
+      x0: gx - gw / 2,
+      x1: gx + gw / 2,
+      z0: gz - gd / 2,
+      z1: gz + gd / 2,
+    };
+  };
+
+  // =====================================================================
+  //  ゴール判定 → 花火のフィナーレ
+  // =====================================================================
+  private checkGoal = () => {
+    if (this.goalReached) return;
+    const p = this.ballBody.position;
+    const { x0, x1, z0, z1 } = this.goalBounds;
+    const inGoal = p.x > x0 && p.x < x1 && p.z > z0 && p.z < z1 && p.y < 1.0;
+    if (inGoal) {
+      this.goalReached = true;
+      this.spawnFireworks(new THREE.Vector3(p.x, p.y + 1.5, p.z));
+    }
+  };
+
+  // ---- 花火(パーティクル)を生成: 加算合成の発光スプライト ----
+  private spawnFireworks = (center: THREE.Vector3) => {
+    const N = 700;
+    const positions = new Float32Array(N * 3);
+    const colors = new Float32Array(N * 3);
+    const velocities = new Float32Array(N * 3);
+
+    const palette = [
+      new THREE.Color(0xffdd55),
+      new THREE.Color(0xff5588),
+      new THREE.Color(0x66ddff),
+      new THREE.Color(0x88ff99),
+    ];
+
+    for (let i = 0; i < N; i++) {
+      positions[i * 3] = center.x;
+      positions[i * 3 + 1] = center.y;
+      positions[i * 3 + 2] = center.z;
+
+      // 球状にランダムな初速
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      const speed = 4 + Math.random() * 6;
+      velocities[i * 3] = Math.sin(phi) * Math.cos(theta) * speed;
+      velocities[i * 3 + 1] = Math.abs(Math.cos(phi)) * speed + 3; // 上向き強め
+      velocities[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * speed;
+
+      const c = palette[Math.floor(Math.random() * palette.length)];
+      colors[i * 3] = c.r;
+      colors[i * 3 + 1] = c.g;
+      colors[i * 3 + 2] = c.b;
+    }
+
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+    const material = new THREE.PointsMaterial({
+      size: 0.28,
+      map: this.makeSpriteTexture(),
+      vertexColors: true,
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+    });
+
+    const points = new THREE.Points(geo, material);
+    this.scene.add(points);
+    this.fireworks = { points, velocities, life: 0 };
+  };
+
+  private makeSpriteTexture = (): THREE.Texture => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 32;
+    const ctx = canvas.getContext("2d")!;
+    const g = ctx.createRadialGradient(16, 16, 0, 16, 16, 16);
+    g.addColorStop(0, "rgba(255,255,255,1)");
+    g.addColorStop(0.3, "rgba(255,255,255,0.8)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 32, 32);
+    return new THREE.CanvasTexture(canvas);
+  };
+
+  private updateFireworks = (delta: number) => {
+    if (!this.fireworks) return;
+    const fw = this.fireworks;
+    fw.life += delta;
+
+    const pos = fw.points.geometry.getAttribute(
+      "position",
+    ) as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      fw.velocities[i * 3 + 1] -= 9.8 * delta; // 重力
+      pos.setX(i, pos.getX(i) + fw.velocities[i * 3] * delta);
+      pos.setY(i, pos.getY(i) + fw.velocities[i * 3 + 1] * delta);
+      pos.setZ(i, pos.getZ(i) + fw.velocities[i * 3 + 2] * delta);
+    }
+    pos.needsUpdate = true;
+
+    // 徐々にフェードアウト
+    const mat = fw.points.material as THREE.PointsMaterial;
+    mat.opacity = Math.max(0, 1 - fw.life / 3.0);
+
+    if (fw.life > 3.2) {
+      this.scene.remove(fw.points);
+      fw.points.geometry.dispose();
+      mat.dispose();
+      this.fireworks = null;
+    }
   };
 
   // ---- テスト用ボール(見た目＋物理) ----
