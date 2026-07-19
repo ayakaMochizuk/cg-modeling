@@ -71,19 +71,6 @@ class Pitagora {
     };
     requestAnimationFrame(render);
 
-    // デバッグ用: 手動で1ステップ進める(hiddenタブでrAFが止まる環境の検証用)
-    (window as any).__step = (n = 1) => {
-      for (let i = 0; i < n; i++) {
-        for (let s = 0; s < 4; s++) this.world.step(1 / 120);
-        this.checkGoal();
-        this.updateFireworks(1 / 30);
-        this.elapsedTime += 1 / 30;
-        this.updateAudience();
-      }
-      this.syncMeshes();
-      renderer.render(this.scene, camera);
-    };
-
     return renderer.domElement;
   };
 
